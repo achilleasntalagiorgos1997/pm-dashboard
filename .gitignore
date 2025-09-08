@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+*.db
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.cache/
+*.log
+
+# Docker
+*.pid
+*.seed
