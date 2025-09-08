@@ -1,15 +1,16 @@
-# Build
-FROM node:20-alpine AS build
+# frontend/Dockerfile
+FROM node:20-alpine
 WORKDIR /app
-COPY frontend/package*.json ./
+
+# Install deps (use npm install as requested)
+COPY package*.json ./
 RUN npm install --no-audit --no-fund
-COPY frontend/ .
-ARG VITE_API_URL
-ENV VITE_API_URL=${VITE_API_URL}
+
+# Build the app
+COPY . .
 RUN npm run build
 
-# Serve static
-FROM nginx:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
-# ensure SPA fallback
-RUN sed -i 's/try_files.*/try_files $uri $uri\/ \/index.html;/' /etc/nginx/conf.d/default.conf
+# Serve the built SPA on 0.0.0.0:3000
+RUN npm i -g serve
+EXPOSE 3000
+CMD ["serve", "-s", "dist", "-l", "tcp://0.0.0.0:3000"]

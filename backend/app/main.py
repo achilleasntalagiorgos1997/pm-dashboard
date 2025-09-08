@@ -25,6 +25,6 @@ app.add_middleware(
 app.include_router(projects_router, prefix="/projects", tags=["projects"])
 app.include_router(realtime_router)  # <-- exposes GET /stream
 
-@app.get("/")
-def root():
+@app.get("/health")
+def health():
     return {"status": "ok"}
