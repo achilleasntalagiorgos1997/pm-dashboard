@@ -1,8 +1,8 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import Dashboard from "./pages/Dashboard";
-import NewProject from "./pages/NewProject"; // new page
-import ProjectDetails from "./pages/ProjectDetails";
+import Dashboard from "../features/project/pages/Dashboard";
+import NewProject from "../features/project/pages/NewProject"; // new page
+import ProjectDetails from "../features/project/pages/ProjectDetails";
 
 export default function App() {
   return (
