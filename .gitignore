@@ -1,19 +1,69 @@
 # Python
 venv/
+env/
+ENV/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+dist/
+build/
+.Python
+*.so
 .env
+.env.local
+.env.*.local
 *.db
+*.sqlite
+*.sqlite3
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Node / frontend
+# Node / Frontend
 node_modules/
 dist/
 build/
 .cache/
+out/
+.next/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
 # Docker
 *.pid
 *.seed
+.dockerignore
+
+# Misc
+.env.example
+.env.development.local
+.env.test.local
+.env.production.local
