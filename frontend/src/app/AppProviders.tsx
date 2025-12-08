@@ -1,20 +1,14 @@
 // src/app/AppProviders.tsx
 import React from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
+import { QueryProvider } from "./providers/query/QueryProvider";
 
-const queryClient = new QueryClient();
-
-interface AppProvidersProps {
-  children: React.ReactNode;
-}
-
-export function AppProviders({ children }: AppProvidersProps) {
+export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <React.StrictMode>
-      <QueryClientProvider client={queryClient}>
+      <QueryProvider>
         <BrowserRouter>{children}</BrowserRouter>
-      </QueryClientProvider>
+      </QueryProvider>
     </React.StrictMode>
   );
 }

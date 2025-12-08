@@ -1,152 +1,124 @@
-// src/features/project/hooks/useProject.ts
-import { useCallback, useEffect, useState } from "react";
-import { Project, Milestone, TeamMember, EventItem } from "../types/project";
-import {
-  getProject,
-  getMilestones,
-  getTeam,
-  getEvents,
-  updateProject,
-  deleteProject,
-} from "../api/projects";
+import { useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import type {
+  Project,
+  Milestone,
+  TeamMember,
+  EventItem,
+} from "../types/project";
 import { openSSE } from "../utils/sse";
 import { BASE_URL } from "../../../shared/api/api";
+import { useProjectQuery } from "../queries/useProjectQuery";
+import { useMilestonesQuery } from "../queries/useMilestonesQuery";
+import { useTeamQuery } from "../queries/useTeamQuery";
+import { useEventsQuery } from "../queries/useEventsQuery";
+import { useUpdateProjectMutation } from "../mutations/useUpdateProjectMutation";
+import { useDeleteProjectMutation } from "../mutations/useDeleteProjectMutation";
 
-/**
- * Single-project hook for the detail page:
- * - Loads project, milestones, team, events in parallel
- * - Listens to SSE updates for project changes and new events
- * - Exposes save (update) and remove (delete/soft-delete)
- * - Computes derived milestones completion percentage
- */
+// src/features/project/hooks/useProject.ts
 export function useProject(id?: string) {
-  const [project, setProject] = useState<Project | null>(null);
+  const queryClient = useQueryClient();
+  const numericId = id ? parseInt(id, 10) : undefined;
 
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [events, setEvents] = useState<EventItem[]>([]);
+  // ---- Queries (read) ----
+  const projectQuery = useProjectQuery(numericId);
+  const milestonesQuery = useMilestonesQuery(numericId);
+  const teamQuery = useTeamQuery(numericId);
+  const eventsQuery = useEventsQuery(numericId);
 
-  const [loading, setLoading] = useState<boolean>(!!id);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const project = projectQuery.data ?? null;
+  const milestones = milestonesQuery.data ?? [];
+  const team = teamQuery.data ?? [];
+  const events = eventsQuery.data ?? [];
 
-  /**
-   * Subscribe to SSE stream for live updates.
-   * - project_updated → patch current project
-   * - event_created  → prepend event and re-sort by date
-   * - project_deleted → (optional) could navigate away or show banner
-   */
+  const loading =
+    projectQuery.isLoading ||
+    milestonesQuery.isLoading ||
+    teamQuery.isLoading ||
+    eventsQuery.isLoading;
+
+  const firstError =
+    projectQuery.error ||
+    milestonesQuery.error ||
+    teamQuery.error ||
+    eventsQuery.error;
+
+  const errorMessage =
+    (firstError as any)?.message || "Unable to load project.";
+
+  // ---- SSE subscription (live updates) ----
   useEffect(() => {
-    if (!id) return;
+    if (!numericId) return;
 
     const close = openSSE(`${BASE_URL}/stream`, (msg) => {
-      if (msg.type === "project_updated" && msg.id === project?.id) {
-        setProject((p) => (p ? { ...p, ...(msg.patch ?? {}) } : p));
+      if (msg.type === "project_updated" && msg.id === numericId) {
+        queryClient.setQueryData(
+          ["project", numericId],
+          (old: Project | undefined) => {
+            if (!old) return old;
+            return { ...old, ...(msg.patch ?? {}) };
+          }
+        );
       }
 
-      if (msg.type === "event_created" && msg.project_id === project?.id) {
-        setEvents((evs) => {
-          const next = [msg.event, ...evs];
-          return next.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
-        });
+      if (msg.type === "event_created" && msg.project_id === numericId) {
+        queryClient.setQueryData(
+          ["events", numericId],
+          (old: EventItem[] | undefined) => {
+            if (!old) return old;
+            const next = [msg.event, ...old];
+            return next.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+          }
+        );
       }
 
-      if (msg.type === "project_deleted" && msg.id === project?.id) {
-        // Optional: navigate("/") or show a banner
+      if (msg.type === "project_deleted" && msg.id === numericId) {
+        // Optional: navigate away or show banner
       }
     });
 
     return () => close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, project?.id]);
+  }, [numericId, queryClient]);
 
-  /**
-   * Fetch all project-related data in parallel:
-   * - project
-   * - milestones
-   * - team
-   * - events
-   */
-  const fetchAll = useCallback(async () => {
-    if (!id) return;
+  // ---- Mutations (write) ----
+  const updateMutation = useUpdateProjectMutation(numericId);
+  const deleteMutation = useDeleteProjectMutation(numericId);
 
-    setLoading(true);
-    setError(null);
+  const save = (payload: Partial<Omit<Project, "id">>) =>
+    updateMutation.mutateAsync(payload);
 
-    try {
-      const [p, ms, tm, ev] = await Promise.all([
-        getProject(id),
-        getMilestones(id),
-        getTeam(id),
-        getEvents(id),
-      ]);
+  const remove = () => deleteMutation.mutateAsync();
 
-      setProject(p);
-      setMilestones(ms);
-      setTeam(tm);
-      // sort events desc by time if backend unsorted
-      setEvents(
-        ev.slice().sort((a, b) => (b.at || "").localeCompare(a.at || ""))
-      );
-    } catch (e: any) {
-      setError(e.message || "Unable to load project.");
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
-
-  /**
-   * Save updates to the project (partial update).
-   */
-  const save = async (payload: Partial<Omit<Project, "id">>) => {
-    if (!project) return;
-    setSaving(true);
-    setError(null);
-
-    try {
-      const updated = await updateProject(project.id, payload);
-      setProject(updated);
-      return updated;
-    } catch (e: any) {
-      setError(e.message || "Failed to save changes.");
-      throw e;
-    } finally {
-      setSaving(false);
-    }
+  // ---- Refresh helper ----
+  const refresh = async () => {
+    if (!numericId) return;
+    await Promise.all([
+      projectQuery.refetch(),
+      milestonesQuery.refetch(),
+      teamQuery.refetch(),
+      eventsQuery.refetch(),
+    ]);
   };
 
-  /**
-   * Delete / soft-delete project.
-   */
-  const remove = async () => {
-    if (!project) return;
-    setDeleting(true);
-    setError(null);
+  // ---- Derived: milestone completion percentage ----
+  const milestonesPct = useMemo(() => {
+    if (!milestones.length) return null;
+    const done = milestones.filter((m) => m.done).length;
+    return Math.round((done / milestones.length) * 100);
+  }, [milestones]);
 
-    try {
-      await deleteProject(project.id);
-      // Optional: you could also clear state or navigate away here
-    } catch (e: any) {
-      setError(e.message || "Failed to delete project.");
-      throw e;
-    } finally {
-      setDeleting(false);
-    }
-  };
+  // ---- Exposed setters (write directly to cache) ----
+  const setProject = (p: Project | null) =>
+    queryClient.setQueryData(["project", numericId], p);
 
-  /**
-   * Derived: milestone completion percentage.
-   */
-  const milestonesPct = milestones.length
-    ? Math.round(
-        (milestones.filter((m) => m.done).length / milestones.length) * 100
-      )
-    : null;
+  const setMilestones = (ms: Milestone[]) =>
+    queryClient.setQueryData(["milestones", numericId], ms);
+
+  const setTeam = (t: TeamMember[]) =>
+    queryClient.setQueryData(["team", numericId], t);
+
+  const setEvents = (ev: EventItem[]) =>
+    queryClient.setQueryData(["events", numericId], ev);
 
   return {
     project,
@@ -155,13 +127,12 @@ export function useProject(id?: string) {
     events,
     milestonesPct,
     loading,
-    error,
-    saving,
-    deleting,
+    error: firstError ? errorMessage : null,
+    saving: updateMutation.isPending,
+    deleting: deleteMutation.isPending,
     save,
     remove,
-    refresh: fetchAll,
-    // exposing setters gives the UI room for local optimistic updates if needed
+    refresh,
     setProject,
     setMilestones,
     setTeam,
