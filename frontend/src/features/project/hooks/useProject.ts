@@ -1,3 +1,4 @@
+// src/features/project/hooks/useProject.ts
 import { useCallback, useEffect, useState } from "react";
 import { Project, Milestone, TeamMember, EventItem } from "../types/project";
 import {
@@ -9,11 +10,14 @@ import {
   deleteProject,
 } from "../api/projects";
 import { openSSE } from "../utils/sse";
+import { BASE_URL } from "../../../shared/api/api";
+
 /**
  * Single-project hook for the detail page:
  * - Loads project, milestones, team, events in parallel
- * - Exposes save (PUT) and remove (soft delete)
- * - Computes derived milestones percent
+ * - Listens to SSE updates for project changes and new events
+ * - Exposes save (update) and remove (delete/soft-delete)
+ * - Computes derived milestones completion percentage
  */
 export function useProject(id?: string) {
   const [project, setProject] = useState<Project | null>(null);
@@ -27,32 +31,49 @@ export function useProject(id?: string) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  /**
+   * Subscribe to SSE stream for live updates.
+   * - project_updated → patch current project
+   * - event_created  → prepend event and re-sort by date
+   * - project_deleted → (optional) could navigate away or show banner
+   */
   useEffect(() => {
     if (!id) return;
-    const base =
-      (import.meta as any).env?.VITE_API_URL ?? "http://127.0.0.1:8000";
-    const close = openSSE(`${base}/stream`, (msg) => {
+
+    const close = openSSE(`${BASE_URL}/stream`, (msg) => {
       if (msg.type === "project_updated" && msg.id === project?.id) {
         setProject((p) => (p ? { ...p, ...(msg.patch ?? {}) } : p));
       }
+
       if (msg.type === "event_created" && msg.project_id === project?.id) {
         setEvents((evs) => {
           const next = [msg.event, ...evs];
           return next.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
         });
       }
+
       if (msg.type === "project_deleted" && msg.id === project?.id) {
-        // optional: navigate("/") or show a banner
+        // Optional: navigate("/") or show a banner
       }
     });
+
     return () => close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, project?.id]);
 
+  /**
+   * Fetch all project-related data in parallel:
+   * - project
+   * - milestones
+   * - team
+   * - events
+   */
   const fetchAll = useCallback(async () => {
     if (!id) return;
+
     setLoading(true);
     setError(null);
+
     try {
       const [p, ms, tm, ev] = await Promise.all([
         getProject(id),
@@ -60,6 +81,7 @@ export function useProject(id?: string) {
         getTeam(id),
         getEvents(id),
       ]);
+
       setProject(p);
       setMilestones(ms);
       setTeam(tm);
@@ -78,10 +100,14 @@ export function useProject(id?: string) {
     fetchAll();
   }, [fetchAll]);
 
+  /**
+   * Save updates to the project (partial update).
+   */
   const save = async (payload: Partial<Omit<Project, "id">>) => {
     if (!project) return;
     setSaving(true);
     setError(null);
+
     try {
       const updated = await updateProject(project.id, payload);
       setProject(updated);
@@ -94,12 +120,17 @@ export function useProject(id?: string) {
     }
   };
 
+  /**
+   * Delete / soft-delete project.
+   */
   const remove = async () => {
     if (!project) return;
     setDeleting(true);
     setError(null);
+
     try {
       await deleteProject(project.id);
+      // Optional: you could also clear state or navigate away here
     } catch (e: any) {
       setError(e.message || "Failed to delete project.");
       throw e;
@@ -108,6 +139,9 @@ export function useProject(id?: string) {
     }
   };
 
+  /**
+   * Derived: milestone completion percentage.
+   */
   const milestonesPct = milestones.length
     ? Math.round(
         (milestones.filter((m) => m.done).length / milestones.length) * 100
@@ -127,6 +161,7 @@ export function useProject(id?: string) {
     save,
     remove,
     refresh: fetchAll,
+    // exposing setters gives the UI room for local optimistic updates if needed
     setProject,
     setMilestones,
     setTeam,

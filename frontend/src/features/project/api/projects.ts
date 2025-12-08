@@ -1,4 +1,9 @@
-// api/projects.ts
+// src/features/project/api/projects.ts
+
+// Feature-agnostic HTTP helper from the shared layer
+import { http } from "../../../shared/api/api";
+
+// Project feature types
 import {
   Project,
   ProjectListParams,
@@ -9,37 +14,14 @@ import {
   ProjectsBulkRequest,
   ProjectsBulkResponse,
 } from "../types/project";
+
+// Project-related utilities
 import { toTagArray } from "../utils/tags";
 
-const BASE_URL =
-  (import.meta as any).env?.VITE_API_URL ?? "http://127.0.0.1:8000";
-
-/** Generic JSON fetch with FastAPI-friendly error parsing */
-async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, init);
-  if (!res.ok) {
-    let message = `Request failed (HTTP ${res.status})`;
-    try {
-      const body = await res.json();
-      if (Array.isArray((body as any)?.detail)) {
-        message = (body as any).detail
-          .map((d: any) => d.msg || d.detail || JSON.stringify(d))
-          .join("; ");
-      } else if ((body as any)?.detail) {
-        message =
-          typeof (body as any).detail === "string"
-            ? (body as any).detail
-            : JSON.stringify((body as any).detail);
-      }
-    } catch {
-      /* ignore parse errors */
-    }
-    throw new Error(message);
-  }
-  return (await res.json()) as T;
-}
-
-/** Normalize server project shape to UI Project */
+/**
+ * Normalize a raw project object coming from the backend into
+ * a fully-typed Project with safe default values.
+ */
 function normalizeProject(p: any): Project {
   return {
     id: p.id,
@@ -52,110 +34,122 @@ function normalizeProject(p: any): Project {
     progress: typeof p.progress === "number" ? p.progress : 0,
     last_updated: p.last_updated ?? "",
     deleted_at: p.deleted_at ?? null,
-    // NEW: optimistic concurrency token (fallback 0 if server not yet sending it)
-    version: typeof p.version === "number" ? p.version : 0,
+    version: p.version ?? 1,
   };
 }
 
-/* =========================
-   Listing / CRUD
-   ========================= */
+/**
+ * Build query string from ProjectListParams.
+ * Adjust keys to match your backend expectations.
+ */
+function buildProjectListQuery(params: ProjectListParams): string {
+  const searchParams = new URLSearchParams();
 
-export async function listProjects(
+  if (params.page != null) searchParams.set("page", String(params.page));
+  if (params.page_size != null)
+    searchParams.set("page_size", String(params.page_size));
+  if (params.sort_by) searchParams.set("sort_by", params.sort_by);
+  if (params.sort_dir) searchParams.set("sort_dir", params.sort_dir);
+  if (params.status) searchParams.set("status", params.status);
+  if (params.search) searchParams.set("search", params.search);
+
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
+}
+
+/**
+ * Fetch a paginated list of projects.
+ */
+export async function getProjects(
   params: ProjectListParams
 ): Promise<ProjectListResponse> {
-  const q = new URLSearchParams();
-  if (params.page) q.set("page", String(params.page));
-  if (params.page_size) q.set("page_size", String(params.page_size));
-  if (params.sort_by) q.set("sort_by", params.sort_by);
-  if (params.sort_dir) q.set("sort_dir", params.sort_dir);
-  if (params.status) q.set("status", params.status);
-  if (params.owner) q.set("owner", params.owner);
-  if (params.tag) q.set("tag", params.tag);
-  if (params.health) q.set("health", params.health);
-  if (params.include_deleted) q.set("include_deleted", "true");
+  const query = buildProjectListQuery(params);
 
-  const data = await http<any>(`${BASE_URL}/projects?${q.toString()}`);
-  const items: Project[] = Array.isArray(data.items)
-    ? data.items.map(normalizeProject)
-    : Array.isArray(data)
-    ? data.map(normalizeProject) // fallback if API returns a bare array
-    : [];
+  // Raw response type is unknown, we normalize it into ProjectListResponse
+  const data = await http<any>(`/projects/${query}`);
 
   return {
-    items,
-    total: Number(data.total ?? items.length ?? 0),
-    page: Number(data.page ?? params.page ?? 1),
-    page_size: Number(data.page_size ?? params.page_size ?? items.length ?? 0),
+    total: data.total ?? 0,
+    page: data.page ?? params.page ?? 1,
+    page_size: data.page_size ?? params.page_size ?? 10,
+    items: Array.isArray(data.items) ? data.items.map(normalizeProject) : [],
   };
 }
 
+/**
+ * Fetch a single project by id.
+ */
 export async function getProject(id: number | string): Promise<Project> {
-  const data = await http<any>(`${BASE_URL}/projects/${id}`);
+  const data = await http<any>(`/projects/${id}`);
   return normalizeProject(data);
 }
 
+/**
+ * Create a new project.
+ * Adjust payload type if you have a dedicated `ProjectCreate` type.
+ */
 export async function createProject(
-  payload: Omit<Project, "id" | "last_updated" | "deleted_at" | "version">
+  payload: Partial<Project>
 ): Promise<Project> {
-  const data = await http<any>(`${BASE_URL}/projects`, {
+  const data = await http<any>("/projects", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    // backend expects tags as list[str]
-    body: JSON.stringify({ ...payload, tags: payload.tags }),
-  });
-  return normalizeProject(data);
-}
-
-export async function updateProject(
-  id: number,
-  payload: Partial<Omit<Project, "id">>
-): Promise<Project> {
-  const data = await http<any>(`${BASE_URL}/projects/${id}`, {
-    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+
   return normalizeProject(data);
 }
 
-export async function deleteProject(id: number): Promise<void> {
-  // soft delete on server
-  await http<void>(`${BASE_URL}/projects/${id}`, { method: "DELETE" });
-}
-
-export async function recoverProject(id: number): Promise<Project> {
-  const data = await http<any>(`${BASE_URL}/projects/${id}/recover`, {
-    method: "POST",
+/**
+ * Update an existing project.
+ */
+export async function updateProject(
+  id: number | string,
+  payload: Partial<Project>
+): Promise<Project> {
+  const data = await http<any>(`/projects/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
+
   return normalizeProject(data);
 }
 
-/* =========================
-   Bulk Operations (atomic + optimistic concurrency)
-   ========================= */
+/**
+ * Soft-delete / delete a project.
+ * Adjust method or URL if your backend uses something else.
+ */
+export async function deleteProject(id: number | string): Promise<void> {
+  await http<void>(`/projects/${id}`, {
+    method: "DELETE",
+  });
+}
 
-export async function bulkProjects(
+/**
+ * Bulk operations on projects (if your backend supports it).
+ */
+export async function bulkUpdateProjects(
   payload: ProjectsBulkRequest
 ): Promise<ProjectsBulkResponse> {
-  return http<ProjectsBulkResponse>(`${BASE_URL}/projects/bulk`, {
+  const data = await http<ProjectsBulkResponse>("/projects/bulk", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+
+  return data;
 }
 
-/* =========================
-   Sections (milestones / team / events)
-   ========================= */
-
+/**
+ * Fetch milestones for a project.
+ */
 export async function getMilestones(
   projectId: number | string
 ): Promise<Milestone[]> {
   try {
-    const data = await http<any[]>(
-      `${BASE_URL}/projects/${projectId}/milestones`
-    );
+    const data = await http<any[]>(`/projects/${projectId}/milestones`);
+
     return Array.isArray(data)
       ? data.map((m) => ({
           id: m.id,
@@ -165,15 +159,20 @@ export async function getMilestones(
         }))
       : [];
   } catch {
-    return []; // graceful if endpoint not yet implemented
+    // Swallow API errors and return empty arrays so UI can degrade gracefully
+    return [];
   }
 }
 
+/**
+ * Fetch team members for a project.
+ */
 export async function getTeam(
   projectId: number | string
 ): Promise<TeamMember[]> {
   try {
-    const data = await http<any[]>(`${BASE_URL}/projects/${projectId}/team`);
+    const data = await http<any[]>(`/projects/${projectId}/team`);
+
     return Array.isArray(data)
       ? data.map((t) => ({
           id: t.id,
@@ -188,11 +187,15 @@ export async function getTeam(
   }
 }
 
+/**
+ * Fetch event timeline for a project.
+ */
 export async function getEvents(
   projectId: number | string
 ): Promise<EventItem[]> {
   try {
-    const data = await http<any[]>(`${BASE_URL}/projects/${projectId}/events`);
+    const data = await http<any[]>(`/projects/${projectId}/events`);
+
     return Array.isArray(data)
       ? data.map((e) => ({
           id: e.id,
