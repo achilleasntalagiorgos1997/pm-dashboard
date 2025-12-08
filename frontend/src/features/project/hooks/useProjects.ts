@@ -1,8 +1,7 @@
-// hooks/useProjects.ts
+// src/features/project/hooks/useProjects.ts
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Project,
   ProjectListParams,
   ProjectListResponse,
   ProjectStatus,
@@ -19,14 +18,15 @@ import { BASE_URL } from "../../../shared/api/api";
 /**
  * Hook that manages the list of projects using React Query:
  * - loads paginated/sorted/filtered projects with automatic caching
- * - listens to SSE for live updates (invalidates cache when needed)
+ * - listens to SSE for live updates (invalidates or patches cache)
  * - exposes pagination, sorting, filtering controls
  * - supports delete and bulk operations via mutations
  */
 export function useProjects(initial: ProjectListParams = {}) {
   const queryClient = useQueryClient();
 
-  // Current query params (pagination, sorting, filters)
+  /* ----------------- Local params: pagination / filters ----------------- */
+
   const [params, setParams] = useState<ProjectListParams>({
     page: 1,
     page_size: 12,
@@ -35,8 +35,9 @@ export function useProjects(initial: ProjectListParams = {}) {
     ...initial,
   });
 
-  // React Query: fetch projects based on current params
-  const { data, isLoading, error } = useQuery({
+  /* ------------------------------ Query -------------------------------- */
+
+  const { data, isLoading, error } = useQuery<ProjectListResponse>({
     queryKey: ["projects", params],
     queryFn: () => getProjects(params),
   });
@@ -44,17 +45,18 @@ export function useProjects(initial: ProjectListParams = {}) {
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
 
-  // SSE subscription for real-time updates
+  /* ------------------------- SSE (live updates) ------------------------- */
+
   useEffect(() => {
     const close = openSSE(`${BASE_URL}/stream`, (msg) => {
       if (msg.type === "project_created" || msg.type === "project_recovered") {
-        // Invalidate the list to refetch with current filters
+        // Refetch all lists (current filters still applied via params in queryKey)
         queryClient.invalidateQueries({ queryKey: ["projects"] });
         return;
       }
 
       if (msg.type === "project_deleted") {
-        // Update cache optimistically
+        // Optimistically remove from current page
         queryClient.setQueryData(
           ["projects", params],
           (old: ProjectListResponse | undefined) => {
@@ -70,7 +72,7 @@ export function useProjects(initial: ProjectListParams = {}) {
       }
 
       if (msg.type === "project_updated") {
-        // Patch the item in cache
+        // Patch project in current page
         queryClient.setQueryData(
           ["projects", params],
           (old: ProjectListResponse | undefined) => {
@@ -89,9 +91,11 @@ export function useProjects(initial: ProjectListParams = {}) {
     return () => close();
   }, [params, queryClient]);
 
-  // Mutation: delete (soft-delete) a project
+  /* --------------------------- Mutations --------------------------- */
+
+  // 1) Single delete (soft delete)
   const deleteProjectMutation = useMutation({
-    mutationFn: deleteProject,
+    mutationFn: (id: number) => deleteProject(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
@@ -99,13 +103,26 @@ export function useProjects(initial: ProjectListParams = {}) {
 
   const softDelete = (id: number) => deleteProjectMutation.mutate(id);
 
-  // Mutation: bulk update status
-  const bulkStatusMutation = useMutation({
-    mutationFn: (payload: {
-      ids: number[];
-      versions: Record<number, number>;
-      newStatus: ProjectStatus;
-    }) =>
+  // Common helpers for bulk mutations
+  type BulkStatusPayload = {
+    ids: number[];
+    versions: Record<number, number>;
+    newStatus: ProjectStatus;
+  };
+
+  type BulkTagPayload = {
+    ids: number[];
+    versions: Record<number, number>;
+    tag: string;
+  };
+
+  // 2) Bulk status update
+  const bulkStatusMutation = useMutation<
+    ProjectsBulkResponse,
+    unknown,
+    BulkStatusPayload
+  >({
+    mutationFn: (payload) =>
       bulkUpdateProjects({
         action: "update_status",
         ids: payload.ids,
@@ -117,29 +134,19 @@ export function useProjects(initial: ProjectListParams = {}) {
     },
   });
 
-  const bulkUpdateStatus = async (
+  const bulkUpdateStatus = (
     ids: number[],
     versions: Record<number, number>,
     newStatus: ProjectStatus
-  ): Promise<ProjectsBulkResponse> => {
-    return new Promise((resolve, reject) => {
-      bulkStatusMutation.mutate(
-        { ids, versions, newStatus },
-        {
-          onSuccess: (data) => resolve(data),
-          onError: (error) => reject(error),
-        }
-      );
-    });
-  };
+  ) => bulkStatusMutation.mutateAsync({ ids, versions, newStatus });
 
-  // Mutation: bulk add tag
-  const bulkAddTagMutation = useMutation({
-    mutationFn: (payload: {
-      ids: number[];
-      versions: Record<number, number>;
-      tag: string;
-    }) =>
+  // 3) Bulk add tag
+  const bulkAddTagMutation = useMutation<
+    ProjectsBulkResponse,
+    unknown,
+    BulkTagPayload
+  >({
+    mutationFn: (payload) =>
       bulkUpdateProjects({
         action: "add_tag",
         ids: payload.ids,
@@ -151,29 +158,19 @@ export function useProjects(initial: ProjectListParams = {}) {
     },
   });
 
-  const bulkAddTag = async (
+  const bulkAddTag = (
     ids: number[],
     versions: Record<number, number>,
     tag: string
-  ): Promise<ProjectsBulkResponse> => {
-    return new Promise((resolve, reject) => {
-      bulkAddTagMutation.mutate(
-        { ids, versions, tag },
-        {
-          onSuccess: (data) => resolve(data),
-          onError: (error) => reject(error),
-        }
-      );
-    });
-  };
+  ) => bulkAddTagMutation.mutateAsync({ ids, versions, tag });
 
-  // Mutation: bulk remove tag
-  const bulkRemoveTagMutation = useMutation({
-    mutationFn: (payload: {
-      ids: number[];
-      versions: Record<number, number>;
-      tag: string;
-    }) =>
+  // 4) Bulk remove tag
+  const bulkRemoveTagMutation = useMutation<
+    ProjectsBulkResponse,
+    unknown,
+    BulkTagPayload
+  >({
+    mutationFn: (payload) =>
       bulkUpdateProjects({
         action: "remove_tag",
         ids: payload.ids,
@@ -185,23 +182,14 @@ export function useProjects(initial: ProjectListParams = {}) {
     },
   });
 
-  const bulkRemoveTag = async (
+  const bulkRemoveTag = (
     ids: number[],
     versions: Record<number, number>,
     tag: string
-  ): Promise<ProjectsBulkResponse> => {
-    return new Promise((resolve, reject) => {
-      bulkRemoveTagMutation.mutate(
-        { ids, versions, tag },
-        {
-          onSuccess: (data) => resolve(data),
-          onError: (error) => reject(error),
-        }
-      );
-    });
-  };
+  ) => bulkRemoveTagMutation.mutateAsync({ ids, versions, tag });
 
-  // Pagination / sorting / filters
+  /* ---------------- Pagination / sorting / filters ---------------- */
+
   const onPageChange = (page: number) => setParams((p) => ({ ...p, page }));
 
   const onPageSizeChange = (page_size: number) =>
@@ -225,12 +213,14 @@ export function useProjects(initial: ProjectListParams = {}) {
       page: 1,
     }));
 
+  /* ------------------------------- Return ------------------------------- */
+
   return {
     // data
     items,
     total,
 
-    // status (map React Query isLoading to loading for compatibility)
+    // status
     loading: isLoading,
     error: error ? (error as any).message || "Failed to load projects" : null,
 
@@ -244,7 +234,7 @@ export function useProjects(initial: ProjectListParams = {}) {
     // single-item actions
     softDelete,
 
-    // bulk actions
+    // bulk actions (even if dashboard doesn't use them right now)
     bulkUpdateStatus,
     bulkAddTag,
     bulkRemoveTag,

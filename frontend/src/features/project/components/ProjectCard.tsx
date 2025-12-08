@@ -2,18 +2,7 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import ProgressBar from "./ProgressBar";
 import TagBadge from "./TagBadge";
-
-interface Project {
-  id: number;
-  title: string;
-  description: string;
-  owner: string;
-  status: string;
-  health: string;
-  tags: string[];
-  progress: number;
-  last_updated: string;
-}
+import type { Project } from "../types/project";
 
 const ProjectCard = ({ project }: { project: Project }) => {
   const navigate = useNavigate();
@@ -26,8 +15,8 @@ const ProjectCard = ({ project }: { project: Project }) => {
       <h2 className="text-lg font-semibold">{project.title}</h2>
       <p className="text-sm text-gray-600 flex-1">{project.description}</p>
       <div className="mt-2 text-sm text-gray-500">Owner: {project.owner}</div>
-      <div className="mt-1 text-sm">Status: {project.status}</div>
-      <div className="mt-1 flex gap-2 flex-wrap">
+      <div className="mt-2 text-sm">Status: {project.status}</div>
+      <div className="mt-2 flex gap-2 flex-wrap">
         {project.tags.map((t, idx) => (
           <React.Fragment key={idx}>
             <TagBadge tag={t} />

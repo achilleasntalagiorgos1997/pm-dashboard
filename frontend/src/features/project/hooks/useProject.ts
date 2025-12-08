@@ -1,30 +1,57 @@
+// src/features/project/hooks/useProject.ts
 import { useEffect, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   Project,
   Milestone,
   TeamMember,
   EventItem,
 } from "../types/project";
+import {
+  getProject,
+  getMilestones,
+  getTeam,
+  getEvents,
+  updateProject,
+  deleteProject,
+} from "../api/projects";
 import { openSSE } from "../utils/sse";
 import { BASE_URL } from "../../../shared/api/api";
-import { useProjectQuery } from "../queries/useProjectQuery";
-import { useMilestonesQuery } from "../queries/useMilestonesQuery";
-import { useTeamQuery } from "../queries/useTeamQuery";
-import { useEventsQuery } from "../queries/useEventsQuery";
-import { useUpdateProjectMutation } from "../mutations/useUpdateProjectMutation";
-import { useDeleteProjectMutation } from "../mutations/useDeleteProjectMutation";
 
-// src/features/project/hooks/useProject.ts
 export function useProject(id?: string) {
   const queryClient = useQueryClient();
   const numericId = id ? parseInt(id, 10) : undefined;
 
-  // ---- Queries (read) ----
-  const projectQuery = useProjectQuery(numericId);
-  const milestonesQuery = useMilestonesQuery(numericId);
-  const teamQuery = useTeamQuery(numericId);
-  const eventsQuery = useEventsQuery(numericId);
+  /* --------------------------- Queries (read) --------------------------- */
+
+  const projectQuery = useQuery<Project | null>({
+    queryKey: ["project", numericId],
+    queryFn: () => getProject(numericId!),
+    enabled: !!numericId,
+  });
+
+  const milestonesQuery = useQuery<Milestone[]>({
+    queryKey: ["milestones", numericId],
+    queryFn: () => getMilestones(numericId!),
+    enabled: !!numericId,
+  });
+
+  const teamQuery = useQuery<TeamMember[]>({
+    queryKey: ["team", numericId],
+    queryFn: () => getTeam(numericId!),
+    enabled: !!numericId,
+  });
+
+  const eventsQuery = useQuery<EventItem[]>({
+    queryKey: ["events", numericId],
+    queryFn: async () => {
+      const events = await getEvents(numericId!);
+      return events
+        .slice()
+        .sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+    },
+    enabled: !!numericId,
+  });
 
   const project = projectQuery.data ?? null;
   const milestones = milestonesQuery.data ?? [];
@@ -46,7 +73,8 @@ export function useProject(id?: string) {
   const errorMessage =
     (firstError as any)?.message || "Unable to load project.";
 
-  // ---- SSE subscription (live updates) ----
+  /* ---------------------- SSE subscription (live) ---------------------- */
+
   useEffect(() => {
     if (!numericId) return;
 
@@ -80,16 +108,34 @@ export function useProject(id?: string) {
     return () => close();
   }, [numericId, queryClient]);
 
-  // ---- Mutations (write) ----
-  const updateMutation = useUpdateProjectMutation(numericId);
-  const deleteMutation = useDeleteProjectMutation(numericId);
+  /* ---------------------------- Mutations ---------------------------- */
+
+  const updateMutation = useMutation({
+    mutationFn: (payload: Partial<Omit<Project, "id">>) =>
+      updateProject(numericId!, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["project", numericId], updated);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteProject(numericId!),
+    onSuccess: () => {
+      // Invalidate all project-related queries
+      queryClient.invalidateQueries({ queryKey: ["project"] });
+      queryClient.invalidateQueries({ queryKey: ["milestones"] });
+      queryClient.invalidateQueries({ queryKey: ["team"] });
+      queryClient.invalidateQueries({ queryKey: ["events"] });
+    },
+  });
 
   const save = (payload: Partial<Omit<Project, "id">>) =>
     updateMutation.mutateAsync(payload);
 
   const remove = () => deleteMutation.mutateAsync();
 
-  // ---- Refresh helper ----
+  /* --------------------------- Refresh helper --------------------------- */
+
   const refresh = async () => {
     if (!numericId) return;
     await Promise.all([
@@ -100,14 +146,16 @@ export function useProject(id?: string) {
     ]);
   };
 
-  // ---- Derived: milestone completion percentage ----
+  /* ---------------------- Derived: milestonesPct ---------------------- */
+
   const milestonesPct = useMemo(() => {
     if (!milestones.length) return null;
     const done = milestones.filter((m) => m.done).length;
     return Math.round((done / milestones.length) * 100);
   }, [milestones]);
 
-  // ---- Exposed setters (write directly to cache) ----
+  /* ---------------------- Exposed cache setters ---------------------- */
+
   const setProject = (p: Project | null) =>
     queryClient.setQueryData(["project", numericId], p);
 
@@ -119,6 +167,8 @@ export function useProject(id?: string) {
 
   const setEvents = (ev: EventItem[]) =>
     queryClient.setQueryData(["events", numericId], ev);
+
+  /* ------------------------------ Return ------------------------------ */
 
   return {
     project,

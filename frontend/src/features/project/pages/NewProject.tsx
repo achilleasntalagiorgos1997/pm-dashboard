@@ -1,15 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-
-const BASE_URL = "http://127.0.0.1:8000";
-
-function parseTags(input: string): string[] {
-  // Split on commas or whitespace, trim, remove empties
-  return input
-    .split(/[, ]+/)
-    .map((t) => t.trim())
-    .filter(Boolean);
-}
+import { BASE_URL, http } from "../../../shared/api/api";
+import { toTagArray } from "../utils/tags";
 
 const NewProject = () => {
   const navigate = useNavigate();
@@ -38,7 +30,7 @@ const NewProject = () => {
         status,
         health,
         // IMPORTANT: backend expects list[str]
-        tags: parseTags(tagsInput),
+        tags: toTagArray(tagsInput),
         progress: Number(progress) || 0,
       };
 

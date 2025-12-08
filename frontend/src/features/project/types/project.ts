@@ -53,7 +53,7 @@ export type ProjectSortKey =
 
 /** Listing params stay the same; bulk ops use separate types below */
 export interface ProjectListParams {
-  search: any;
+  search?: any;
   page?: number;
   page_size?: number;
   sort_by?: ProjectSortKey;
