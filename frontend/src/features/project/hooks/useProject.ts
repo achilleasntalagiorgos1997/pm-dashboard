@@ -1,4 +1,3 @@
-// src/features/project/hooks/useProject.ts
 import { useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
