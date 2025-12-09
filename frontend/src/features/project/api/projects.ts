@@ -1,9 +1,4 @@
-// src/features/project/api/projects.ts
-
-// Feature-agnostic HTTP helper from the shared layer
 import { http } from "../../../shared/api/api";
-
-// Project feature types
 import {
   Project,
   ProjectListParams,
@@ -14,35 +9,50 @@ import {
   ProjectsBulkRequest,
   ProjectsBulkResponse,
 } from "../types/project";
-
-// Project-related utilities
 import { toTagArray } from "../utils/tags";
 
-/**
- * Normalize a raw project object coming from the backend into
- * a fully-typed Project with safe default values.
- */
-function normalizeProject(p: any): Project {
-  return {
-    id: p.id,
-    title: p.title ?? "",
-    description: p.description ?? "",
-    owner: p.owner ?? "",
-    status: p.status ?? "active",
-    health: p.health ?? "green",
-    tags: toTagArray(p.tags),
-    progress: typeof p.progress === "number" ? p.progress : 0,
-    last_updated: p.last_updated ?? "",
-    deleted_at: p.deleted_at ?? null,
-    version: p.version ?? 1,
-  };
-}
+/* ==================== Normalizers ==================== */
 
-/**
- * Build query string from ProjectListParams.
- * Adjust keys to match your backend expectations.
- */
-function buildProjectListQuery(params: ProjectListParams): string {
+const normalizeProject = (p: any): Project => ({
+  id: p.id,
+  title: p.title ?? "",
+  description: p.description ?? "",
+  owner: p.owner ?? "",
+  status: p.status ?? "active",
+  health: p.health ?? "green",
+  tags: toTagArray(p.tags),
+  progress: typeof p.progress === "number" ? p.progress : 0,
+  last_updated: p.last_updated ?? "",
+  deleted_at: p.deleted_at ?? null,
+  version: p.version ?? 1,
+});
+
+const normalizeMilestone = (m: any): Milestone => ({
+  id: m.id,
+  project_id: m.project_id,
+  title: m.title ?? "",
+  done: !!m.done,
+});
+
+const normalizeTeamMember = (t: any): TeamMember => ({
+  id: t.id,
+  project_id: t.project_id,
+  name: t.name ?? "",
+  role: t.role ?? "",
+  capacity: Number(t.capacity ?? 0),
+});
+
+const normalizeEvent = (e: any): EventItem => ({
+  id: e.id,
+  project_id: e.project_id,
+  kind: e.kind ?? "update",
+  message: e.message ?? "",
+  at: e.at ?? e.timestamp ?? "",
+});
+
+/* ==================== Query Builders ==================== */
+
+const buildProjectListQuery = (params: ProjectListParams): string => {
   const searchParams = new URLSearchParams();
 
   if (params.page != null) searchParams.set("page", String(params.page));
@@ -51,22 +61,28 @@ function buildProjectListQuery(params: ProjectListParams): string {
   if (params.sort_by) searchParams.set("sort_by", params.sort_by);
   if (params.sort_dir) searchParams.set("sort_dir", params.sort_dir);
   if (params.status) searchParams.set("status", params.status);
+  if (params.owner) searchParams.set("owner", params.owner);
+  if (params.tag) searchParams.set("tag", params.tag);
+  if (params.health) searchParams.set("health", params.health);
   if (params.search) searchParams.set("search", params.search);
+  if (params.include_deleted) searchParams.set("include_deleted", "true");
 
   const query = searchParams.toString();
   return query ? `?${query}` : "";
-}
+};
 
-/**
- * Fetch a paginated list of projects.
- */
-export async function getProjects(
+/* ==================== API Functions ==================== */
+
+export const getProjects = async (
   params: ProjectListParams
-): Promise<ProjectListResponse> {
+): Promise<ProjectListResponse> => {
   const query = buildProjectListQuery(params);
-
-  // Raw response type is unknown, we normalize it into ProjectListResponse
-  const data = await http<any>(`/projects/${query}`);
+  const data = await http<{
+    items: any[];
+    total: number;
+    page: number;
+    page_size: number;
+  }>(`/projects/${query}`);
 
   return {
     total: data.total ?? 0,
@@ -74,138 +90,64 @@ export async function getProjects(
     page_size: data.page_size ?? params.page_size ?? 10,
     items: Array.isArray(data.items) ? data.items.map(normalizeProject) : [],
   };
-}
+};
 
-/**
- * Fetch a single project by id.
- */
-export async function getProject(id: number | string): Promise<Project> {
+export const getProject = async (id: number | string): Promise<Project> => {
   const data = await http<any>(`/projects/${id}`);
   return normalizeProject(data);
-}
+};
 
-/**
- * Create a new project.
- * Adjust payload type if you have a dedicated `ProjectCreate` type.
- */
-export async function createProject(
+export const createProject = async (
   payload: Partial<Project>
-): Promise<Project> {
+): Promise<Project> => {
   const data = await http<any>("/projects", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-
   return normalizeProject(data);
-}
+};
 
-/**
- * Update an existing project.
- */
-export async function updateProject(
+export const updateProject = async (
   id: number | string,
   payload: Partial<Project>
-): Promise<Project> {
+): Promise<Project> => {
   const data = await http<any>(`/projects/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-
   return normalizeProject(data);
-}
+};
 
-/**
- * Soft-delete / delete a project.
- * Adjust method or URL if your backend uses something else.
- */
-export async function deleteProject(id: number | string): Promise<void> {
-  await http<void>(`/projects/${id}`, {
-    method: "DELETE",
-  });
-}
+export const deleteProject = async (id: number | string): Promise<void> => {
+  await http<void>(`/projects/${id}`, { method: "DELETE" });
+};
 
-/**
- * Bulk operations on projects (if your backend supports it).
- */
-export async function bulkUpdateProjects(
+export const bulkUpdateProjects = async (
   payload: ProjectsBulkRequest
-): Promise<ProjectsBulkResponse> {
-  const data = await http<ProjectsBulkResponse>("/projects/bulk", {
+): Promise<ProjectsBulkResponse> => {
+  return http<ProjectsBulkResponse>("/projects/bulk", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+};
 
-  return data;
-}
-
-/**
- * Fetch milestones for a project.
- */
-export async function getMilestones(
+export const getMilestones = async (
   projectId: number | string
-): Promise<Milestone[]> {
-  try {
-    const data = await http<any[]>(`/projects/${projectId}/milestones`);
+): Promise<Milestone[]> => {
+  const data = await http<any[]>(`/projects/${projectId}/milestones`);
+  return Array.isArray(data) ? data.map(normalizeMilestone) : [];
+};
 
-    return Array.isArray(data)
-      ? data.map((m) => ({
-          id: m.id,
-          project_id: m.project_id,
-          title: m.title ?? "",
-          done: !!m.done,
-        }))
-      : [];
-  } catch {
-    // Swallow API errors and return empty arrays so UI can degrade gracefully
-    return [];
-  }
-}
-
-/**
- * Fetch team members for a project.
- */
-export async function getTeam(
+export const getTeam = async (
   projectId: number | string
-): Promise<TeamMember[]> {
-  try {
-    const data = await http<any[]>(`/projects/${projectId}/team`);
+): Promise<TeamMember[]> => {
+  const data = await http<any[]>(`/projects/${projectId}/team`);
+  return Array.isArray(data) ? data.map(normalizeTeamMember) : [];
+};
 
-    return Array.isArray(data)
-      ? data.map((t) => ({
-          id: t.id,
-          project_id: t.project_id,
-          name: t.name ?? "",
-          role: t.role ?? "",
-          capacity: Number(t.capacity ?? 0),
-        }))
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Fetch event timeline for a project.
- */
-export async function getEvents(
+export const getEvents = async (
   projectId: number | string
-): Promise<EventItem[]> {
-  try {
-    const data = await http<any[]>(`/projects/${projectId}/events`);
-
-    return Array.isArray(data)
-      ? data.map((e) => ({
-          id: e.id,
-          project_id: e.project_id,
-          kind: e.kind ?? "update",
-          message: e.message ?? "",
-          at: e.at ?? e.timestamp ?? "",
-        }))
-      : [];
-  } catch {
-    return [];
-  }
-}
+): Promise<EventItem[]> => {
+  const data = await http<any[]>(`/projects/${projectId}/events`);
+  return Array.isArray(data) ? data.map(normalizeEvent) : [];
+};
